@@ -10,4 +10,8 @@ __pycache__/
 *.pyc
 *.pt
 *.keras
+*.safetensors
+*.bin
+backend/models/*
+!backend/models/.gitkeep
 training/Indian-License-Plate-Merged-2/

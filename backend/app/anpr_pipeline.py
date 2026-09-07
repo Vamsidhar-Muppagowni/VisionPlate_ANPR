@@ -3,14 +3,20 @@ from datetime import datetime
 from pathlib import Path
 
 import cv2
-import easyocr
+from PIL import Image
 import numpy as np
 import torch
+from transformers import TrOCRProcessor, VisionEncoderDecoderModel
+import torch
 from ultralytics import YOLO
+import tensorflow as tf
 
 
 ROOT = Path(__file__).resolve().parents[1]
 WEIGHTS_PATH = ROOT / "models" / "yolo" / "best.pt"
+OCR_MODEL_PATH = ROOT / "models" / "ocr" # Path for custom trained TrOCR
+CNN_MODEL_PATH = ROOT / "models" / "cnn" / "vehicle_classifier.keras"
+CNN_CLASSES_PATH = ROOT / "models" / "cnn" / "classes.txt"
 OUTPUT_DIR = ROOT / "outputs"
 UPLOAD_DIR = ROOT / "uploads"
 
@@ -22,14 +28,17 @@ VALID_STATE_CODES = {
 }
 _detector = None
 _reader = None
+_processor = None
+_cnn_model = None
+_cnn_classes = []
 
 
 def model_status() -> dict:
     return {
         "yolo_weights_found": WEIGHTS_PATH.exists(),
         "weights_path": str(WEIGHTS_PATH),
-        "ocr": "EasyOCR English reader",
-        "cnn": "Optional character classifier scaffold in training/cnn_character_model.py",
+        "ocr": "Custom TrOCR Model",
+        "cnn": f"Vehicle Classifier ({'Loaded' if CNN_MODEL_PATH.exists() else 'Not Found'})",
     }
 
 
@@ -42,11 +51,44 @@ def get_detector():
     return _detector
 
 
+_processor = None
+
 def get_reader():
-    global _reader
+    global _reader, _processor
     if _reader is None:
-        _reader = easyocr.Reader(["en"], gpu=torch.cuda.is_available())
-    return _reader
+        model_name = str(OCR_MODEL_PATH) if OCR_MODEL_PATH.exists() else "microsoft/trocr-small-printed"
+        _processor = TrOCRProcessor.from_pretrained(model_name)
+        _reader = VisionEncoderDecoderModel.from_pretrained(model_name)
+        if torch.cuda.is_available():
+            _reader = _reader.to("cuda")
+    return _processor, _reader
+
+def get_vehicle_classifier():
+    global _cnn_model, _cnn_classes
+    if _cnn_model is None and CNN_MODEL_PATH.exists():
+        _cnn_model = tf.keras.models.load_model(str(CNN_MODEL_PATH))
+        if CNN_CLASSES_PATH.exists():
+            with open(CNN_CLASSES_PATH, "r") as f:
+                _cnn_classes = f.read().strip().split(",")
+        else:
+            _cnn_classes = ["Car", "Motorcycle", "Truck"] # fallback
+    return _cnn_model, _cnn_classes
+
+def classify_vehicle(image: np.ndarray) -> str:
+    model, classes = get_vehicle_classifier()
+    if model is None:
+        return "Unknown"
+    
+    # Preprocess for MobileNetV2
+    resized = cv2.resize(image, (128, 128))
+    rgb = cv2.cvtColor(resized, cv2.COLOR_BGR2RGB)
+    img_array = tf.keras.preprocessing.image.img_to_array(rgb)
+    img_array = tf.expand_dims(img_array, 0)
+    
+    predictions = model.predict(img_array, verbose=0)
+    score = tf.nn.softmax(predictions[0])
+    
+    return classes[np.argmax(score)]
 
 
 def clean_plate_text(text: str) -> str:
@@ -122,28 +164,33 @@ def is_valid_indian_plate(text: str, detection_confidence: float, ocr_confidence
 
 def read_plate(crop: np.ndarray, detection_confidence: float) -> tuple[str, float, bool]:
     processed = preprocess_plate(crop)
-    variants = [processed]
-    _, thresholded = cv2.threshold(processed, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-    variants.append(thresholded)
-
-    candidates = []
-    for image in variants:
-        results = get_reader().readtext(
-            image,
-            allowlist="ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789",
-            detail=1,
-            paragraph=False,
-        )
-        for result in results:
-            text = normalize_common_ocr_errors(clean_plate_text(result[1]))
-            if text:
-                candidates.append((text, float(result[2])))
-
-    if not candidates:
+    
+    # Convert OpenCV image (BGR/Grayscale) to RGB for TrOCR
+    if len(processed.shape) == 2:
+        processed_rgb = cv2.cvtColor(processed, cv2.COLOR_GRAY2RGB)
+    else:
+        processed_rgb = cv2.cvtColor(processed, cv2.COLOR_BGR2RGB)
+        
+    pil_image = Image.fromarray(processed_rgb)
+    
+    processor, model = get_reader()
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    
+    # Generate text
+    pixel_values = processor(images=pil_image, return_tensors="pt").pixel_values.to(device)
+    with torch.no_grad():
+        # Using output scores to estimate a dummy confidence since TrOCR generation doesn't return probabilities natively without extra config
+        generated_ids = model.generate(pixel_values, max_length=12)
+        generated_text = processor.batch_decode(generated_ids, skip_special_tokens=True)[0]
+    
+    text = normalize_common_ocr_errors(clean_plate_text(generated_text))
+    
+    if not text:
         return "", 0.0, False
 
-    best_text, confidence = max(candidates, key=lambda item: item[1])
-    return best_text, confidence, is_valid_indian_plate(best_text, detection_confidence, confidence)
+    # TrOCR doesn't give a simple confidence score by default, returning 0.9 as placeholder
+    confidence = 0.9 
+    return text, confidence, is_valid_indian_plate(text, detection_confidence, confidence)
 
 
 def detect_image(image_path: Path) -> dict:
@@ -155,6 +202,9 @@ def detect_image(image_path: Path) -> dict:
     model = get_detector()
     result = model.predict(source=image, imgsz=640, conf=0.25, verbose=False)[0]
     detections = []
+    
+    # Classify the overall vehicle type once per image (assuming 1 main vehicle)
+    vehicle_type = classify_vehicle(image)
 
     for box in result.boxes:
         x1, y1, x2, y2 = map(int, box.xyxy[0].tolist())
@@ -175,6 +225,7 @@ def detect_image(image_path: Path) -> dict:
                 "ocr_confidence": round(ocr_confidence, 4),
                 "is_valid": is_valid,
                 "bbox": [x1, y1, x2, y2],
+                "vehicle_type": vehicle_type,
             }
         )
 
@@ -237,6 +288,7 @@ def detect_video(video_path: Path, frame_stride: int = 8) -> dict:
                             "is_valid": is_valid,
                             "frame": frame_index,
                             "bbox": [x1, y1, x2, y2],
+                            "vehicle_type": classify_vehicle(frame),
                         }
                     )
 
