@@ -1,0 +1,6 @@
+{
+  "name": "Plate Vision",
+  "description": "Autonomous vision and neural automatic license plate recognition (ALPR) pipeline dashboard with YOLO detection, TrOCR recognition, and vehicle classification.",
+  "requestFramePermissions": ["camera"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
