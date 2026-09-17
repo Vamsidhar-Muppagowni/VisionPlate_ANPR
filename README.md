@@ -53,6 +53,8 @@ The API returns:
 - regex validation status
 - timestamp
 
-## Dataset Recommendation
+## Dataset
 
-Use a public Indian license plate detection dataset from Roboflow Universe. Export it in YOLOv8 format from Colab after authenticating with your Roboflow API key.
+The official dataset for this project, featuring unconstrained Indian commercial vehicle plates, vehicle classifications, and noisy CCTV data for training the DnCNN, YOLOv8, MobileNetV2, and TrOCR models, is published on IEEE DataPort.
+
+🔗 **[Download the VisionPlate ANPR Dataset on IEEE DataPort (DOI: 10.21227/jm45-4129)](https://dx.doi.org/10.21227/jm45-4129)**
