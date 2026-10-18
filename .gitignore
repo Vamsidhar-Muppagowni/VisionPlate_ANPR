@@ -16,4 +16,4 @@ backend/models/*
 !backend/models/.gitkeep
 training/Indian-License-Plate-Merged-2/
 
-data/
+/data/
