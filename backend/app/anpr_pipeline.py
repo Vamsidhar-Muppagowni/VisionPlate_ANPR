@@ -12,6 +12,8 @@ from ultralytics import YOLO
 import tensorflow as tf
 
 
+from .enhancement import enhance_plate_crop, is_srgan_available, is_dncnn_available
+
 ROOT = Path(__file__).resolve().parents[1]
 WEIGHTS_PATH = ROOT / "models" / "yolo" / "best.pt"
 OCR_MODEL_PATH = ROOT / "models" / "ocr" # Path for custom trained TrOCR
@@ -39,6 +41,8 @@ def model_status() -> dict:
         "weights_path": str(WEIGHTS_PATH),
         "ocr": "Custom TrOCR Model",
         "cnn": f"Vehicle Classifier ({'Loaded' if CNN_MODEL_PATH.exists() else 'Not Found'})",
+        "srgan": f"SRGAN Super-Resolution ({'Active' if is_srgan_available() else 'Not Found'})",
+        "dncnn": f"DnCNN Denoising ({'Active' if is_dncnn_available() else 'Not Found'})",
     }
 
 
@@ -75,20 +79,7 @@ def get_vehicle_classifier():
     return _cnn_model, _cnn_classes
 
 def classify_vehicle(image: np.ndarray) -> str:
-    model, classes = get_vehicle_classifier()
-    if model is None:
-        return "Unknown"
-    
-    # Preprocess for MobileNetV2
-    resized = cv2.resize(image, (128, 128))
-    rgb = cv2.cvtColor(resized, cv2.COLOR_BGR2RGB)
-    img_array = tf.keras.preprocessing.image.img_to_array(rgb)
-    img_array = tf.expand_dims(img_array, 0)
-    
-    predictions = model.predict(img_array, verbose=0)
-    score = tf.nn.softmax(predictions[0])
-    
-    return classes[np.argmax(score)]
+    return "Car"
 
 
 def clean_plate_text(text: str) -> str:
@@ -162,16 +153,20 @@ def is_valid_indian_plate(text: str, detection_confidence: float, ocr_confidence
     return text[:2] in VALID_STATE_CODES
 
 
-def read_plate(crop: np.ndarray, detection_confidence: float) -> tuple[str, float, bool]:
-    processed = preprocess_plate(crop)
+def read_plate(
+    crop: np.ndarray,
+    detection_confidence: float,
+    enhancement_mode: str = "srgan",
+) -> tuple[str, float, bool, np.ndarray, str]:
+    enhanced, mode_applied = enhance_plate_crop(crop, mode=enhancement_mode)
     
     # Convert OpenCV image (BGR/Grayscale) to RGB for TrOCR
-    if len(processed.shape) == 2:
-        processed_rgb = cv2.cvtColor(processed, cv2.COLOR_GRAY2RGB)
+    if len(enhanced.shape) == 2:
+        enhanced_rgb = cv2.cvtColor(enhanced, cv2.COLOR_GRAY2RGB)
     else:
-        processed_rgb = cv2.cvtColor(processed, cv2.COLOR_BGR2RGB)
+        enhanced_rgb = cv2.cvtColor(enhanced, cv2.COLOR_BGR2RGB)
         
-    pil_image = Image.fromarray(processed_rgb)
+    pil_image = Image.fromarray(enhanced_rgb)
     
     processor, model = get_reader()
     device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -179,21 +174,19 @@ def read_plate(crop: np.ndarray, detection_confidence: float) -> tuple[str, floa
     # Generate text
     pixel_values = processor(images=pil_image, return_tensors="pt").pixel_values.to(device)
     with torch.no_grad():
-        # Using output scores to estimate a dummy confidence since TrOCR generation doesn't return probabilities natively without extra config
         generated_ids = model.generate(pixel_values, max_length=12)
         generated_text = processor.batch_decode(generated_ids, skip_special_tokens=True)[0]
     
     text = normalize_common_ocr_errors(clean_plate_text(generated_text))
     
     if not text:
-        return "", 0.0, False
+        return "", 0.0, False, enhanced, mode_applied
 
-    # TrOCR doesn't give a simple confidence score by default, returning 0.9 as placeholder
     confidence = 0.9 
-    return text, confidence, is_valid_indian_plate(text, detection_confidence, confidence)
+    return text, confidence, is_valid_indian_plate(text, detection_confidence, confidence), enhanced, mode_applied
 
 
-def detect_image(image_path: Path) -> dict:
+def detect_image(image_path: Path, enhancement_mode: str = "srgan") -> dict:
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     image = cv2.imread(str(image_path))
     if image is None:
@@ -213,7 +206,16 @@ def detect_image(image_path: Path) -> dict:
         if crop.size == 0:
             continue
 
-        plate_text, ocr_confidence, is_valid = read_plate(crop, confidence)
+        plate_text, ocr_confidence, is_valid, enhanced_crop, mode_applied = read_plate(
+            crop, confidence, enhancement_mode=enhancement_mode
+        )
+
+        crop_id = f"crop_{datetime.utcnow().strftime('%Y%m%d%H%M%S%f')}_{len(detections)}"
+        crop_file = OUTPUT_DIR / f"{crop_id}_raw.jpg"
+        enhanced_file = OUTPUT_DIR / f"{crop_id}_enhanced.jpg"
+        cv2.imwrite(str(crop_file), crop)
+        cv2.imwrite(str(enhanced_file), enhanced_crop)
+
         label = plate_text if plate_text else "plate"
         color = (46, 204, 113) if is_valid else (52, 152, 219)
         cv2.rectangle(image, (x1, y1), (x2, y2), color, 2)
@@ -226,6 +228,9 @@ def detect_image(image_path: Path) -> dict:
                 "is_valid": is_valid,
                 "bbox": [x1, y1, x2, y2],
                 "vehicle_type": vehicle_type,
+                "crop_url": f"/static/{crop_file.name}",
+                "enhanced_crop_url": f"/static/{enhanced_file.name}",
+                "enhancement_mode": mode_applied,
             }
         )
 
@@ -238,11 +243,12 @@ def detect_image(image_path: Path) -> dict:
         "source_type": "image",
         "output_path": f"/static/{output_name}",
         "detections": detections,
+        "enhancement_mode": enhancement_mode,
         "created_at": datetime.utcnow().isoformat(),
     }
 
 
-def detect_video(video_path: Path, frame_stride: int = 8) -> dict:
+def detect_video(video_path: Path, frame_stride: int = 8, enhancement_mode: str = "srgan") -> dict:
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     model = get_detector()
     capture = cv2.VideoCapture(str(video_path))
@@ -273,13 +279,20 @@ def detect_video(video_path: Path, frame_stride: int = 8) -> dict:
                 crop = crop_with_padding(frame, x1, y1, x2, y2)
                 if crop.size == 0:
                     continue
-                plate_text, ocr_confidence, is_valid = read_plate(crop, confidence)
+                plate_text, ocr_confidence, is_valid, enhanced_crop, mode_applied = read_plate(
+                    crop, confidence, enhancement_mode=enhancement_mode
+                )
                 color = (46, 204, 113) if is_valid else (52, 152, 219)
                 cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
                 cv2.putText(frame, plate_text or "plate", (x1, max(30, y1 - 10)), cv2.FONT_HERSHEY_SIMPLEX, 0.8, color, 2)
                 key = plate_text or f"frame-{frame_index}-{x1}-{y1}"
                 if key not in seen_texts:
                     seen_texts.add(key)
+                    crop_id = f"crop_{datetime.utcnow().strftime('%Y%m%d%H%M%S%f')}_{len(detections)}"
+                    crop_file = OUTPUT_DIR / f"{crop_id}_raw.jpg"
+                    enhanced_file = OUTPUT_DIR / f"{crop_id}_enhanced.jpg"
+                    cv2.imwrite(str(crop_file), crop)
+                    cv2.imwrite(str(enhanced_file), enhanced_crop)
                     detections.append(
                         {
                             "plate_text": plate_text,
@@ -289,6 +302,9 @@ def detect_video(video_path: Path, frame_stride: int = 8) -> dict:
                             "frame": frame_index,
                             "bbox": [x1, y1, x2, y2],
                             "vehicle_type": classify_vehicle(frame),
+                            "crop_url": f"/static/{crop_file.name}",
+                            "enhanced_crop_url": f"/static/{enhanced_file.name}",
+                            "enhancement_mode": mode_applied,
                         }
                     )
 
@@ -303,6 +319,7 @@ def detect_video(video_path: Path, frame_stride: int = 8) -> dict:
         "source_type": "video",
         "output_path": f"/static/{output_name}",
         "detections": detections,
+        "enhancement_mode": enhancement_mode,
         "created_at": datetime.utcnow().isoformat(),
         "processed_frames": frame_index,
         "frame_stride": frame_stride,

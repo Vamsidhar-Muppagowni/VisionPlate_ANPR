@@ -7,6 +7,7 @@ interface TelemetryExportStageProps {
   sample: SampleTarget;
   onPrev: () => void;
   onReset: () => void;
+  onNext?: () => void;
 }
 
 export const TelemetryExportStage: React.FC<TelemetryExportStageProps> = ({
@@ -14,6 +15,7 @@ export const TelemetryExportStage: React.FC<TelemetryExportStageProps> = ({
   sample,
   onPrev,
   onReset,
+  onNext,
 }) => {
   const [activeTab, setActiveTab] = useState<'summary' | 'json'>('summary');
   const [copied, setCopied] = useState(false);
@@ -215,6 +217,18 @@ export const TelemetryExportStage: React.FC<TelemetryExportStageProps> = ({
               <RotateCcw className="w-4 h-4" />
               <span>Analyze New Target</span>
             </button>
+
+            {/* View Model Evaluation */}
+            {onNext && (
+              <button
+                type="button"
+                onClick={onNext}
+                className="px-5 py-2.5 rounded-xl bg-[#571bc1] text-[#d0bcff] font-semibold hover:bg-[#6d28d9] transition-all flex items-center gap-2 shadow-md shadow-[#571bc1]/25 text-[13px] cursor-pointer border border-[#d0bcff]/20"
+              >
+                <FileText className="w-4 h-4" />
+                <span>View Evaluation Report</span>
+              </button>
+            )}
           </div>
         </div>
       </div>

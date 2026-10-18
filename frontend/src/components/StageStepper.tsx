@@ -1,5 +1,5 @@
 import React from 'react';
-import { Target, Scan, Car, FileCheck } from 'lucide-react';
+import { Target, Scan, Car, FileCheck, BarChart2 } from 'lucide-react';
 import { PipelineStage } from '../types';
 
 interface StageStepperProps {
@@ -46,11 +46,18 @@ export const StageStepper: React.FC<StageStepperProps> = ({
       subTitle: 'STAGE 04',
       icon: <FileCheck className="w-5 h-5" />,
     },
+    {
+      stage: 5,
+      numberStr: '05',
+      title: 'Model Evaluation',
+      subTitle: 'STAGE 05',
+      icon: <BarChart2 className="w-5 h-5" />,
+    },
   ];
 
   return (
     <div className="w-full bg-[#141822]/80 backdrop-blur-2xl p-2.5 sm:p-4 rounded-xl border border-[#272a32] shadow-xl shadow-black/50">
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-2 sm:gap-3">
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-2 sm:gap-3">
         {stages.map((st) => {
           const isActive = currentStage === st.stage;
           const isPassed = currentStage > st.stage;

@@ -9,11 +9,12 @@ import { YoloDetectionStage } from './components/stages/YoloDetectionStage';
 import { TrocrRecognitionStage } from './components/stages/TrocrRecognitionStage';
 import { VehicleCnnStage } from './components/stages/VehicleCnnStage';
 import { TelemetryExportStage } from './components/stages/TelemetryExportStage';
+import { ModelEvaluationStage } from './components/stages/ModelEvaluationStage';
 import { PipelineGraphView } from './components/views/PipelineGraphView';
 import { ModelZooView } from './components/views/ModelZooView';
 import { ClusterStatusView } from './components/views/ClusterStatusView';
 import { ApiDocsView } from './components/views/ApiDocsView';
-import { UploadCloud, PlayCircle } from 'lucide-react';
+import { UploadCloud, PlayCircle, Sparkles } from 'lucide-react';
 
 export default function App() {
   // Screen mode: 'gateway' (Image 16) or 'dashboard' (Image 4 & HTML)
@@ -24,6 +25,7 @@ export default function App() {
   const [currentStage, setCurrentStage] = useState<PipelineStage>(1);
   const [currentSample, setCurrentSample] = useState<SampleTarget>(SAMPLES[0]);
   const [payload, setPayload] = useState<DetectionPayload>(INITIAL_PAYLOAD);
+  const [enhancementMode, setEnhancementMode] = useState<'srgan' | 'dncnn' | 'none'>('srgan');
 
   // Responsive sidebar state (closed by default on mobile/tablet, open on desktop)
   const [sidebarOpen, setSidebarOpen] = useState<boolean>(() => {
@@ -37,6 +39,8 @@ export default function App() {
   const imageRef = useRef<HTMLImageElement | null>(null);
   const [allDetections, setAllDetections] = useState<any[]>([]);
   const [originalImage, setOriginalImage] = useState<string>('');
+  const [originalVideo, setOriginalVideo] = useState<string>('');
+  const [sourceMediaType, setSourceMediaType] = useState<'image' | 'video'>('image');
   const [selectedDetectionIndex, setSelectedDetectionIndex] = useState<number>(0);
 
   // Automatically close sidebar on resize to mobile/tablet breakpoint
@@ -54,7 +58,7 @@ export default function App() {
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (currentView !== 'inference-playground' || screenMode !== 'dashboard') return;
-      if (e.key === 'ArrowRight' && currentStage < 4) {
+      if (e.key === 'ArrowRight' && currentStage < 5) {
         setCurrentStage((prev) => (prev + 1) as PipelineStage);
       } else if (e.key === 'ArrowLeft' && currentStage > 1) {
         setCurrentStage((prev) => (prev - 1) as PipelineStage);
@@ -90,6 +94,9 @@ export default function App() {
       // Vehicle BBox can be full image if not provided
       vehicleBBox: { left: '0%', top: '0%', width: '100%', height: '100%' },
       plateBBox: { left: `${plateLeft}%`, top: `${plateTop}%`, width: `${plateWidth}%`, height: `${plateHeight}%` },
+      cropUrl: detection.crop_url,
+      enhancedCropUrl: detection.enhanced_crop_url,
+      enhancementMode: detection.enhancement_mode,
     };
 
     const newPayload: DetectionPayload = {
@@ -101,6 +108,9 @@ export default function App() {
         plate_text: detection.plate_text || 'UNREADABLE',
         confidence: detection.ocr_confidence || 0,
         country_code: 'IND',
+        enhancement_mode: detection.enhancement_mode,
+        crop_url: detection.crop_url,
+        enhanced_crop_url: detection.enhanced_crop_url,
         tokens: (detection.plate_text || 'UNREADABLE').split('').map((char: string) => ({
           char,
           // If we don't have per-character confidences from backend, we just fake it around the overall confidence
@@ -132,27 +142,39 @@ export default function App() {
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files[0]) {
       const file = e.target.files[0];
-      
+      const isVideo = file.type.startsWith('video/');
       const formData = new FormData();
       formData.append('file', file);
 
       try {
-        const res = await fetch('/api/detect/image', { method: 'POST', body: formData });
+        const baseEndpoint = isVideo ? '/api/detect/video' : '/api/detect/image';
+        const endpoint = `${baseEndpoint}?enhancement=${enhancementMode}`;
+        const res = await fetch(endpoint, { method: 'POST', body: formData });
         const data = await res.json();
         
-        if (data && data.detections && data.detections.length > 0) {
-          const reader = new FileReader();
-          reader.onload = (event) => {
-            if (event.target?.result) {
-              const originalImageUrl = event.target.result as string;
-              setOriginalImage(originalImageUrl);
-              setAllDetections(data.detections);
-              setSelectedDetectionIndex(0);
-            }
-          };
-          reader.readAsDataURL(file);
+        if (data && data.detections) {
+          if (isVideo) {
+            setSourceMediaType('video');
+            setOriginalVideo(data.output_path); // e.g. /static/...mp4
+            setOriginalImage('');
+            setAllDetections(data.detections);
+            setSelectedDetectionIndex(0);
+          } else {
+            setSourceMediaType('image');
+            const reader = new FileReader();
+            reader.onload = (event) => {
+              if (event.target?.result) {
+                const originalImageUrl = event.target.result as string;
+                setOriginalImage(originalImageUrl);
+                setOriginalVideo('');
+                setAllDetections(data.detections);
+                setSelectedDetectionIndex(0);
+              }
+            };
+            reader.readAsDataURL(file);
+          }
         } else {
-          alert("No plates detected.");
+          alert("No plates detected or processing failed.");
         }
       } catch (error) {
         console.error('Detection failed', error);
@@ -185,6 +207,8 @@ export default function App() {
     });
     setAllDetections([]);
     setOriginalImage('');
+    setOriginalVideo('');
+    setSourceMediaType('image');
     setCurrentStage(1);
   };
 
@@ -278,12 +302,28 @@ export default function App() {
                 </div>
               </div>
 
+              {/* Neural Enhancement Selector */}
+              <div className="flex items-center gap-1.5 bg-[#191b23] border border-[#272a32] px-2.5 py-1.5 rounded-xl shadow-inner">
+                <Sparkles className="w-3.5 h-3.5 text-[#4cd7f6]" />
+                <span className="text-[10px] text-[#869397] font-['JetBrains_Mono',monospace] uppercase hidden sm:inline">Enhance:</span>
+                <select
+                  value={enhancementMode}
+                  onChange={(e) => setEnhancementMode(e.target.value as 'srgan' | 'dncnn' | 'none')}
+                  className="bg-[#141822] text-[#4cd7f6] text-[11px] font-['JetBrains_Mono',monospace] font-semibold border border-[#272a32] rounded-lg px-2 py-1 outline-none cursor-pointer hover:border-[#4cd7f6]/50 transition-colors"
+                  title="Choose neural enhancement model applied before TrOCR optical recognition"
+                >
+                  <option value="srgan">SRGAN (4x Super-Res)</option>
+                  <option value="dncnn">DnCNN (Deep Denoise)</option>
+                  <option value="none">Classical (CLAHE)</option>
+                </select>
+              </div>
+
               {/* Upload & Load Sample Buttons */}
               <div className="flex items-center gap-2 w-full sm:w-auto">
                 <input
                   ref={fileInputRef}
                   type="file"
-                  accept="image/*"
+                  accept="image/*,video/*"
                   onChange={handleFileUpload}
                   className="hidden"
                 />
@@ -325,6 +365,8 @@ export default function App() {
                   onNext={() => setCurrentStage(2)}
                   imageRef={imageRef}
                   onCaptureFrame={handleCaptureFrame}
+                  originalVideo={originalVideo}
+                  sourceMediaType={sourceMediaType}
                 />
               )}
 
@@ -352,6 +394,14 @@ export default function App() {
                   payload={payload}
                   sample={currentSample}
                   onPrev={() => setCurrentStage(3)}
+                  onReset={() => setCurrentStage(1)}
+                  onNext={() => setCurrentStage(5)}
+                />
+              )}
+
+              {currentStage === 5 && (
+                <ModelEvaluationStage
+                  onPrev={() => setCurrentStage(4)}
                   onReset={() => setCurrentStage(1)}
                 />
               )}

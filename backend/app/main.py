@@ -37,17 +37,17 @@ def health() -> dict:
 
 
 @app.post("/detect/image")
-async def detect_uploaded_image(file: UploadFile = File(...)) -> dict:
+async def detect_uploaded_image(file: UploadFile = File(...), enhancement: str = "srgan") -> dict:
     if not file.content_type or not file.content_type.startswith("image/"):
         raise HTTPException(status_code=400, detail="Upload an image file")
-    return await _process_upload(file, "image")
+    return await _process_upload(file, "image", enhancement=enhancement)
 
 
 @app.post("/detect/video")
-async def detect_uploaded_video(file: UploadFile = File(...)) -> dict:
+async def detect_uploaded_video(file: UploadFile = File(...), enhancement: str = "srgan") -> dict:
     if not file.content_type or not file.content_type.startswith("video/"):
         raise HTTPException(status_code=400, detail="Upload a video file")
-    return await _process_upload(file, "video")
+    return await _process_upload(file, "video", enhancement=enhancement)
 
 
 @app.get("/history")
@@ -80,11 +80,15 @@ def history_csv() -> StreamingResponse:
     )
 
 
-async def _process_upload(file: UploadFile, source_type: str) -> dict:
+async def _process_upload(file: UploadFile, source_type: str, enhancement: str = "srgan") -> dict:
     destination = UPLOAD_DIR / Path(file.filename or f"upload.{source_type}").name
     destination.write_bytes(await file.read())
     try:
-        result = detect_image(destination) if source_type == "image" else detect_video(destination)
+        result = (
+            detect_image(destination, enhancement_mode=enhancement)
+            if source_type == "image"
+            else detect_video(destination, enhancement_mode=enhancement)
+        )
     except FileNotFoundError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except Exception as exc:

@@ -20,6 +20,8 @@ interface YoloDetectionStageProps {
   onNext: () => void;
   imageRef: React.RefObject<HTMLImageElement | null>;
   onCaptureFrame?: (dataUrl: string) => void;
+  originalVideo?: string;
+  sourceMediaType?: 'image' | 'video';
 }
 
 export const YoloDetectionStage: React.FC<YoloDetectionStageProps> = ({
@@ -28,6 +30,8 @@ export const YoloDetectionStage: React.FC<YoloDetectionStageProps> = ({
   onNext,
   imageRef,
   onCaptureFrame,
+  originalVideo,
+  sourceMediaType = 'image',
 }) => {
   const [hoveredBox, setHoveredBox] = useState<'vehicle' | 'plate' | null>(null);
 
@@ -294,14 +298,23 @@ export const YoloDetectionStage: React.FC<YoloDetectionStageProps> = ({
               <div className="absolute inset-0 bg-white/70 z-30 pointer-events-none transition-opacity duration-200" />
             )}
 
-            {/* Mode 1: Static Target Feed Image */}
-            {sourceMode === 'static' && (
+            {/* Mode 1: Static Target Feed Image or Uploaded Video */}
+            {sourceMode === 'static' && sourceMediaType === 'image' && (
               <img
                 ref={imageRef}
                 src={sample.imageUrl}
                 alt="Vehicle detection target"
                 crossOrigin="anonymous"
                 className="w-full h-full object-cover select-none transition-transform duration-700"
+              />
+            )}
+            {sourceMode === 'static' && sourceMediaType === 'video' && originalVideo && (
+              <video
+                src={originalVideo}
+                autoPlay
+                loop
+                controls
+                className="w-full h-full object-cover select-none"
               />
             )}
 
@@ -341,6 +354,7 @@ export const YoloDetectionStage: React.FC<YoloDetectionStageProps> = ({
             <div className="absolute inset-0 pointer-events-none bg-[radial-gradient(#06b6d4_0.75px,transparent_0.75px)] [background-size:24px_24px] opacity-25" />
 
             {/* YOLO Vehicle BBox Overlay */}
+            {sourceMediaType !== 'video' && (
             <div
               onMouseEnter={() => setHoveredBox('vehicle')}
               onMouseLeave={() => setHoveredBox(null)}
@@ -376,8 +390,10 @@ export const YoloDetectionStage: React.FC<YoloDetectionStageProps> = ({
                 <div className="absolute -bottom-0.5 -right-0.5 w-3.5 h-3.5 border-b-2 border-r-2 border-[#4cd7f6]" />
               </div>
             </div>
+            )}
 
             {/* YOLO License Plate Sub-BBox Overlay */}
+            {sourceMediaType !== 'video' && (
             <div
               onMouseEnter={() => setHoveredBox('plate')}
               onMouseLeave={() => setHoveredBox(null)}
@@ -402,6 +418,7 @@ export const YoloDetectionStage: React.FC<YoloDetectionStageProps> = ({
                 </div>
               </div>
             </div>
+            )}
 
             {/* Bottom Left Telemetry HUD Badge */}
             <div className="absolute bottom-4 left-4 z-20 bg-[#0b0e15]/85 backdrop-blur-md px-3.5 py-1.5 rounded-lg border border-[#272a32] flex items-center gap-4 font-['JetBrains_Mono',monospace] text-[12px]">

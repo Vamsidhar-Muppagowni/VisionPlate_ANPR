@@ -1,6 +1,6 @@
 export type AppView = 'inference-playground' | 'model-pipeline' | 'model-zoo' | 'cluster-telemetry' | 'api-docs';
 
-export type PipelineStage = 1 | 2 | 3 | 4;
+export type PipelineStage = 1 | 2 | 3 | 4 | 5;
 
 export interface BoundingBox {
   x1: number;
@@ -30,6 +30,9 @@ export interface DetectionPayload {
     plate_type: string;
     skew_angle: string;
     tokens: TokenProb[];
+    enhancement_mode?: string;
+    crop_url?: string;
+    enhanced_crop_url?: string;
   };
   vehicle_classification: {
     category: string;
@@ -61,4 +64,7 @@ export interface SampleTarget {
   cropRect: { sxPercent: number; syPercent: number; swPercent: number; shPercent: number };
   vehicleBBox: { left: string; top: string; width: string; height: string };
   plateBBox: { left: string; top: string; width: string; height: string };
+  cropUrl?: string;
+  enhancedCropUrl?: string;
+  enhancementMode?: string;
 }

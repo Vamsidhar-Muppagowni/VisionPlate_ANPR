@@ -18,6 +18,7 @@ export const TrocrRecognitionStage: React.FC<TrocrRecognitionStageProps> = ({
   imageRef,
 }) => {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const [cropViewMode, setCropViewMode] = React.useState<'enhanced' | 'raw'>('enhanced');
   const { trocr_recognition, benchmark_ms } = payload;
 
   const INDIAN_STATES: Record<string, string> = {
@@ -65,6 +66,12 @@ export const TrocrRecognitionStage: React.FC<TrocrRecognitionStageProps> = ({
     imageObj.src = sample.imageUrl;
   }, [sample]);
 
+  const hasEnhancedAsset = Boolean(sample.enhancedCropUrl || trocr_recognition.enhanced_crop_url);
+  const activeCropUrl = cropViewMode === 'enhanced'
+    ? (sample.enhancedCropUrl || trocr_recognition.enhanced_crop_url)
+    : (sample.cropUrl || trocr_recognition.crop_url || sample.enhancedCropUrl);
+  const activeEnhancementLabel = sample.enhancementMode || trocr_recognition.enhancement_mode || 'SRGAN (4x Super-Resolution)';
+
   return (
     <section className="flex flex-col xl:flex-row gap-6 w-full animate-fadeIn">
       {/* Canvas Crop Processor Viewport */}
@@ -80,35 +87,82 @@ export const TrocrRecognitionStage: React.FC<TrocrRecognitionStageProps> = ({
                 microsoft/trocr-base-stage1
               </span>
             </div>
-            <span className="font-['JetBrains_Mono',monospace] text-[11px] text-[#4cd7f6] bg-[#4cd7f6]/10 border border-[#4cd7f6]/20 px-2.5 py-1 rounded">
-              Canvas Slicing Active
-            </span>
+            <div className="flex items-center gap-2">
+              <span className="font-['JetBrains_Mono',monospace] text-[11px] text-[#4cd7f6] bg-[#4cd7f6]/10 border border-[#4cd7f6]/20 px-2.5 py-1 rounded flex items-center gap-1.5">
+                <Sparkles className="w-3.5 h-3.5 text-[#4cd7f6]" />
+                {activeEnhancementLabel}
+              </span>
+            </div>
           </div>
 
-          {/* Live Canvas Crop Inspection Box */}
+          {/* Live Crop / Enhancement Inspection Box */}
           <div className="flex flex-col lg:flex-row items-center gap-6 p-5 sm:p-6 bg-[#0b0e15]/90 border border-[#1d1f27] rounded-xl relative overflow-hidden shadow-inner">
-            {/* Dynamic HTML5 Canvas for real coordinate slice */}
+            {/* Dynamic Crop / Neural Super-Resolution Visualizer */}
             <div className="flex flex-col items-center gap-2.5 w-full lg:w-auto">
-              <span className="font-['JetBrains_Mono',monospace] text-[11px] text-[#869397] uppercase flex items-center gap-1.5">
-                <Camera className="w-3.5 h-3.5 text-[#4cd7f6]" />
-                Live Dynamic Slice [Canvas API]
-              </span>
-              <div className="relative p-2 bg-[#1d1f27]/80 border border-[#272a32] rounded-xl overflow-hidden shadow-2xl">
-                <canvas
-                  ref={canvasRef}
-                  width={360}
-                  height={150}
-                  className="rounded bg-black max-w-full h-auto shadow-md block"
-                />
-                {/* Scan Reticle Grid */}
-                <div className="absolute inset-2 pointer-events-none bg-[linear-gradient(rgba(76,215,246,0.1)_1px,transparent_1px),linear-gradient(90deg,rgba(76,215,246,0.1)_1px,transparent_1px)] bg-[size:16px_16px]" />
-                <div className="absolute top-4 right-4 bg-[#0b0e15]/85 border border-[#272a32] text-[#4cd7f6] font-['JetBrains_Mono',monospace] text-[10px] px-2 py-0.5 rounded">
-                  Bilinear 6x Scale
-                </div>
+              <div className="flex items-center justify-between w-full font-['JetBrains_Mono',monospace] text-[11px]">
+                <span className="text-[#869397] uppercase flex items-center gap-1.5">
+                  <Camera className="w-3.5 h-3.5 text-[#4cd7f6]" />
+                  {hasEnhancedAsset ? 'Plate Inspection' : 'Live Dynamic Slice [Canvas API]'}
+                </span>
+                {hasEnhancedAsset && (
+                  <div className="flex items-center gap-1 bg-[#141822] border border-[#272a32] rounded-lg p-0.5">
+                    <button
+                      type="button"
+                      onClick={() => setCropViewMode('enhanced')}
+                      className={`px-2 py-0.5 rounded text-[10px] cursor-pointer transition-all ${
+                        cropViewMode === 'enhanced'
+                          ? 'bg-[#06b6d4] text-[#00424f] font-bold shadow-sm'
+                          : 'text-[#869397] hover:text-[#e1e2ec]'
+                      }`}
+                    >
+                      Enhanced
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setCropViewMode('raw')}
+                      className={`px-2 py-0.5 rounded text-[10px] cursor-pointer transition-all ${
+                        cropViewMode === 'raw'
+                          ? 'bg-[#1d1f27] text-[#e1e2ec] font-bold border border-[#272a32]'
+                          : 'text-[#869397] hover:text-[#e1e2ec]'
+                      }`}
+                    >
+                      Raw Crop
+                    </button>
+                  </div>
+                )}
+              </div>
+
+              <div className="relative p-2 bg-[#1d1f27]/80 border border-[#272a32] rounded-xl overflow-hidden shadow-2xl flex items-center justify-center min-w-[320px] max-w-[360px] min-h-[150px]">
+                {hasEnhancedAsset && activeCropUrl ? (
+                  <div className="relative flex flex-col items-center justify-center w-full">
+                    <img
+                      src={activeCropUrl}
+                      alt="Plate Crop"
+                      className="rounded bg-black max-w-full max-h-[140px] object-contain shadow-md block border border-[#4cd7f6]/30"
+                    />
+                    <div className="absolute top-2 right-2 bg-[#0b0e15]/90 border border-[#272a32] text-[#4cd7f6] font-['JetBrains_Mono',monospace] text-[10px] px-2 py-0.5 rounded shadow">
+                      {cropViewMode === 'enhanced' ? 'Neural SR 4x' : 'Raw Crop'}
+                    </div>
+                  </div>
+                ) : (
+                  <>
+                    <canvas
+                      ref={canvasRef}
+                      width={360}
+                      height={150}
+                      className="rounded bg-black max-w-full h-auto shadow-md block"
+                    />
+                    {/* Scan Reticle Grid */}
+                    <div className="absolute inset-2 pointer-events-none bg-[linear-gradient(rgba(76,215,246,0.1)_1px,transparent_1px),linear-gradient(90deg,rgba(76,215,246,0.1)_1px,transparent_1px)] bg-[size:16px_16px]" />
+                    <div className="absolute top-4 right-4 bg-[#0b0e15]/85 border border-[#272a32] text-[#4cd7f6] font-['JetBrains_Mono',monospace] text-[10px] px-2 py-0.5 rounded">
+                      Bilinear 6x Scale
+                    </div>
+                  </>
+                )}
               </div>
             </div>
 
-            {/* Reconstructed Plate Visual (European Standard) */}
+            {/* Reconstructed Plate Visual (Indian Standard) */}
             <div className="flex-1 flex flex-col items-center lg:items-start justify-center gap-3 w-full">
               <span className="font-['JetBrains_Mono',monospace] text-[11px] text-[#869397] uppercase tracking-widest">
                 Synthesized Output Matrix
